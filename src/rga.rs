@@ -53,6 +53,7 @@ pub mod rgs {
             };
         }
 
+        /// Local operation to add a new element to the CRDT in the correct position.
         pub fn insert(&mut self, value: String, pred: Option<Uid>, succ: Option<Uid>) -> Uid {
             let uid: Uid = match (pred, succ) {
                 (Some(p), Some(s)) => {
@@ -74,6 +75,34 @@ pub mod rgs {
             self.elements.sort_by(|a, b| a.uid.cmp(&b.uid));
 
             return uid;
+        }
+
+        /// Local operation to mark an element as deleted based on the given UID.
+        pub fn delete(&mut self, uid: Uid) {
+            todo!()
+        }
+
+        /// Local operation to modify the content of an existing element.
+        pub fn update(&mut self, uid: Uid) {
+            todo!()
+        }
+
+        /// Remote operation to add a new element at a position based on a provided UID
+        /// This operation updates the RGA to ensure eventual consistency
+        pub fn remote_insert(&mut self, value: String, uid: Uid) {
+            todo!()
+        }
+
+        /// Remote operation to remove an ekement given the UID
+        /// This operation updates the RGA to ensure eventual consistency
+        pub fn remote_delete(&mut self, uid: Uid) {
+            todo!()
+        }
+
+        /// Remote operation to update an element
+        /// This operation updates the RGA to ensure eventual consistency
+        pub fn remote_update(&mut self, uid: Uid) {
+            todo!()
         }
     }
 
