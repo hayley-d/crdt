@@ -1,6 +1,6 @@
 pub mod rgs {
     use crate::S4Vector;
-    use std::collections::{HashSet, LinkedList};
+    use std::collections::{HashMap, LinkedList};
     #[allow(dead_code)]
 
     /// Node in the RGA represents an element in the array.
@@ -23,9 +23,9 @@ pub mod rgs {
         count: u64,
     }
 
-    pub struct RGA {
+    pub struct RGA<'a> {
         nodes: LinkedList<Node>,
-        hash_map: HashSet<S4Vector, Node>,
+        hash_map: HashMap<S4Vector, &'a Node>,
         current_session: u64,
         local_site: u64,
         local_sequence: u64,
@@ -81,18 +81,18 @@ pub mod rgs {
         }
     }
 
-    impl RGA {
+    impl<'a> RGA<'a> {
         pub fn new(current_session: u64, local_site: u64) -> Self {
             return RGA {
                 nodes: LinkedList::new(),
-                hash_map: HashSet::new(),
+                hash_map: HashMap::new(),
                 current_session,
                 local_site,
                 local_sequence: 0,
             };
         }
 
-        fn insert_into_list(node: Node) {
+        fn insert_into_list(node: Node) -> &'a Node {
             todo!()
         }
 
@@ -103,7 +103,7 @@ pub mod rgs {
             left: Option<Box<Node>>,
             right: Option<Box<Node>>,
         ) {
-            match (left, right) {
+            let new_node: Node = match (left, right) {
                 (Some(l), Some(r)) => {
                     let new_s4: S4Vector = S4Vector::generate(
                         Some(&l.s4vector),
@@ -112,8 +112,7 @@ pub mod rgs {
                         self.local_site,
                         &mut self.local_sequence,
                     );
-                    let new_node: Node = Node::new(value, new_s4, Some(l), Some(r));
-                    RGA::insert_into_list(new_node);
+                    Node::new(value, new_s4, Some(l), Some(r))
                 }
                 (Some(l), None) => {
                     let new_s4: S4Vector = S4Vector::generate(
@@ -123,8 +122,7 @@ pub mod rgs {
                         self.local_site,
                         &mut self.local_sequence,
                     );
-                    let new_node: Node = Node::new(value, new_s4, Some(l), None);
-                    RGA::insert_into_list(new_node);
+                    Node::new(value, new_s4, Some(l), None)
                 }
                 (None, Some(r)) => {
                     let new_s4: S4Vector = S4Vector::generate(
@@ -134,8 +132,7 @@ pub mod rgs {
                         self.local_site,
                         &mut self.local_sequence,
                     );
-                    let new_node: Node = Node::new(value, new_s4, None, Some(r));
-                    RGA::insert_into_list(new_node);
+                    Node::new(value, new_s4, None, Some(r))
                 }
                 (None, None) => {
                     let new_s4: S4Vector = S4Vector::generate(
@@ -145,12 +142,13 @@ pub mod rgs {
                         self.local_site,
                         &mut self.local_sequence,
                     );
-                    let new_node: Node = Node::new(value, new_s4, None, None);
-                    RGA::insert_into_list(new_node);
+                    Node::new(value, new_s4, None, None)
                 }
-            }
+            };
+            let node = RGA::insert_into_list(new_node);
 
-            todo!()
+            self.hash_map.insert(node.s4vector, node);
+            // Broadcast("INSERT",node.s4vector,value,left.s4vector,right.s4vector);
         }
 
         /// Local operation to mark an element as deleted based on the given UID.
