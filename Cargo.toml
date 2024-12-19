@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.42.0", features = ["sync","rt","time"] }
+thiserror = "2.0.8"

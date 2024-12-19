@@ -20,7 +20,7 @@ pub mod rgs {
     }
 
     #[derive(Debug, Clone)]
-    enum OperationType {
+    pub enum OperationType {
         Insert,
         Update,
         Delete,
@@ -73,6 +73,20 @@ pub mod rgs {
         session_id: u64,             //Current session ID
         site_id: u64,                // Unique ID for this replica
         local_sequence: u64,         // Logical clock for this replica
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum OperationError {
+        #[error("Failed to perform operation, dependancies have not been met")]
+        DependancyError,
+    }
+
+    pub struct BroadcastOperation {
+        pub operation: OperationType,
+        pub s4vector: S4Vector,
+        pub value: Option<String>,
+        pub left: Option<S4Vector>,
+        pub right: Option<S4Vector>,
     }
 
     impl Node {
@@ -138,19 +152,7 @@ pub mod rgs {
         }
 
         fn insert_into_list(&mut self, node: Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
-            let right: &Option<S4Vector> = &node.borrow().right;
             let left: &Option<S4Vector> = &node.borrow().left;
-            // TODO: Update logic for insert into list
-
-            /*if let Some(right_s4) = right {
-                let right: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&right_s4]);
-                right.borrow_mut().left = Some(node.borrow().s4vector);
-            }
-
-            if let Some(left_s4) = left {
-                let left: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&left_s4]);
-                left.borrow_mut().right = Some(node.borrow().s4vector);
-            }*/
 
             if let Some(left) = left {
                 let mut current: S4Vector = left.clone();
@@ -186,7 +188,7 @@ pub mod rgs {
             value: String,
             left: Option<S4Vector>,
             right: Option<S4Vector>,
-        ) -> S4Vector {
+        ) -> Result<BroadcastOperation, OperationError> {
             let new_node: Node = match (left, right) {
                 (Some(l), Some(r)) => {
                     // Generate the S4Vector
@@ -207,7 +209,7 @@ pub mod rgs {
                             left,
                             right,
                         });
-                        return new_s4;
+                        return Err(OperationError::DependancyError);
                     }
 
                     Node::new(value, new_s4, Some(l), Some(r))
@@ -230,7 +232,7 @@ pub mod rgs {
                             left,
                             right,
                         });
-                        return new_s4;
+                        return Err(OperationError::DependancyError);
                     }
 
                     Node::new(value, new_s4, Some(l), None)
@@ -253,7 +255,7 @@ pub mod rgs {
                             left,
                             right,
                         });
-                        return new_s4;
+                        return Err(OperationError::DependancyError);
                     }
 
                     Node::new(value, new_s4, None, Some(r))
@@ -276,12 +278,23 @@ pub mod rgs {
             // Insert into the hash table
             self.hash_map
                 .insert(node.borrow().s4vector, Rc::clone(&node));
-            // Broadcast("INSERT",node.s4vector,value,left.s4vector,right.s4vector);
-            return node.borrow().s4vector;
+
+            self.apply_buffered_operations();
+
+            return Ok(BroadcastOperation {
+                operation: OperationType::Insert,
+                s4vector: node.borrow().s4vector,
+                value: Some(node.borrow().value.clone()),
+                left: node.borrow().left.clone(),
+                right: node.borrow().right.clone(),
+            });
         }
 
         /// Local operation to mark an element as deleted based on the given UID.
-        pub fn local_delete(&mut self, s4vector: S4Vector) {
+        pub fn local_delete(
+            &mut self,
+            s4vector: S4Vector,
+        ) -> Result<BroadcastOperation, OperationError> {
             let node: Rc<RefCell<Node>> = match self.hash_map.get(&s4vector) {
                 Some(node) => Rc::clone(&node),
                 None => {
@@ -292,22 +305,54 @@ pub mod rgs {
                         left: None,
                         right: None,
                     });
-                    return;
+                    return Err(OperationError::DependancyError);
                 }
             };
 
             node.borrow_mut().tombstone = true;
 
-            // BROADCAST("DELETE",s4vector)
+            self.apply_buffered_operations();
+
+            return Ok(BroadcastOperation {
+                operation: OperationType::Delete,
+                s4vector: node.borrow().s4vector,
+                value: None,
+                left: node.borrow().left.clone(),
+                right: node.borrow().right.clone(),
+            });
         }
 
         /// Local operation to modify the content of an existing element.
-        pub fn local_update(&mut self, s4vector: S4Vector, value: String) {
-            let node: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&s4vector]);
+        pub fn local_update(
+            &mut self,
+            s4vector: S4Vector,
+            value: String,
+        ) -> Result<BroadcastOperation, OperationError> {
+            let node: Rc<RefCell<Node>> = match &self.hash_map.get(&s4vector) {
+                Some(node) => Rc::clone(node),
+                None => {
+                    self.buffer.push_back(Operation {
+                        operation: OperationType::Update,
+                        s4vector,
+                        value: Some(value),
+                        left: None,
+                        right: None,
+                    });
+                    return Err(OperationError::DependancyError);
+                }
+            };
             if !node.borrow().tombstone {
                 node.borrow_mut().value = value;
             }
-            //broadcast("UPDATE",s4vector,new_val)
+            self.apply_buffered_operations();
+
+            return Ok(BroadcastOperation {
+                operation: OperationType::Update,
+                s4vector: node.borrow().s4vector,
+                value: Some(node.borrow().value.clone()),
+                left: node.borrow().left.clone(),
+                right: node.borrow().right.clone(),
+            });
         }
 
         /// Remote operation to add a new element at a position based on a provided UID
@@ -330,6 +375,7 @@ pub mod rgs {
 
             self.hash_map
                 .insert(node.borrow().s4vector, Rc::clone(&node));
+            self.apply_buffered_operations();
         }
 
         /// Remote operation to remove an ekement given the UID
@@ -343,6 +389,7 @@ pub mod rgs {
                 }
             };
             node.borrow_mut().tombstone = true;
+            self.apply_buffered_operations();
         }
 
         /// Remote operation to update an element
@@ -352,6 +399,7 @@ pub mod rgs {
             if !node.borrow().tombstone {
                 node.borrow_mut().value = value;
             }
+            self.apply_buffered_operations();
         }
 
         /// Reads the RGA in its current state while skipping any tombstoned nodes.
@@ -374,15 +422,9 @@ pub mod rgs {
         }
 
         pub fn apply_buffered_operations(&mut self) {
-            let buffer: &mut VecDeque<Operation> = &mut self.buffer;
+            let mut buffer: VecDeque<Operation> = self.buffer.clone();
 
-            for op in buffer.iter() {
-                if !self.hash_map.contains_key(&op.s4vector) {
-                    break;
-                }
-                let op = buffer.pop_front();
-            }
-            /*self.buffer.retain(|&op| {
+            buffer.retain(|op| {
                 if let Some(left) = &op.left.clone() {
                     if !self.hash_map.contains_key(left) {
                         return true;
@@ -392,21 +434,23 @@ pub mod rgs {
                 match op.operation {
                     OperationType::Insert => {
                         if let Some(value) = &op.value {
-                            &self.remote_insert(value.to_string(), op.s4vector, op.left, op.right);
+                            self.remote_insert(value.clone(), op.s4vector, op.left, op.right);
                         }
                     }
                     OperationType::Update => {
                         if let Some(value) = &op.value {
-                            &self.remote_update(op.s4vector, value.to_string());
+                            self.remote_update(op.s4vector, value.to_string());
                         }
                     }
                     OperationType::Delete => {
-                        &self.remote_delete(op.s4vector);
+                        self.remote_delete(op.s4vector);
                     }
                 }
 
                 false
-            });*/
+            });
+
+            self.buffer = buffer;
         }
     }
 }
