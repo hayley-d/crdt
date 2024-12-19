@@ -1,5 +1,6 @@
 pub mod rgs {
     use crate::S4Vector;
+    use std::cell::RefCell;
     use std::collections::{HashMap, LinkedList};
     use std::rc::Rc;
     #[allow(dead_code)]
@@ -11,11 +12,11 @@ pub mod rgs {
     /// The left and right pointers are references to adjacent nodes in the linked list
     #[derive(Debug, Clone)]
     pub struct Node {
-        value: String,
-        s4vector: S4Vector,
-        tombstone: bool,
-        left: Option<Rc<Node>>,
-        right: Option<Rc<Node>>,
+        pub value: String,
+        pub s4vector: S4Vector,
+        pub tombstone: bool,
+        pub left: Option<S4Vector>,
+        pub right: Option<S4Vector>,
     }
 
     /// Clock keeps the logical time for the replica, it increments for every operation that
@@ -26,7 +27,7 @@ pub mod rgs {
 
     pub struct RGA {
         nodes: LinkedList<Node>,
-        hash_map: HashMap<S4Vector, Rc<Node>>,
+        hash_map: HashMap<S4Vector, Rc<RefCell<Node>>>,
         current_session: u64,
         local_site: u64,
         local_sequence: u64,
@@ -36,8 +37,8 @@ pub mod rgs {
         pub fn new(
             value: String,
             s4: S4Vector,
-            left: Option<Rc<Node>>,
-            right: Option<Rc<Node>>,
+            left: Option<S4Vector>,
+            right: Option<S4Vector>,
         ) -> Self {
             return Node {
                 value,
@@ -93,8 +94,20 @@ pub mod rgs {
             };
         }
 
-        fn insert_into_list(node: Node) -> Rc<Node> {
-            todo!()
+        fn insert_into_list(&mut self, node: Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
+            let right: &Option<S4Vector> = &node.borrow().right;
+            let left: &Option<S4Vector> = &node.borrow().left;
+            if right.is_some() {
+                let right: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&right.unwrap()]);
+                right.borrow_mut().left = Some(node.borrow().s4vector);
+            }
+
+            if left.is_some() {
+                let left: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&left.unwrap()]);
+                left.borrow_mut().right = Some(node.borrow().s4vector);
+            }
+
+            return Rc::clone(&node);
         }
 
         /// Local insert operation to insert the element into the list at a specific position.
@@ -113,7 +126,7 @@ pub mod rgs {
                         self.local_site,
                         &mut self.local_sequence,
                     );
-                    Node::new(value, new_s4, Some(l), Some(r))
+                    Node::new(value, new_s4, Some(l.s4vector), Some(r.s4vector))
                 }
                 (Some(l), None) => {
                     let new_s4: S4Vector = S4Vector::generate(
@@ -123,7 +136,7 @@ pub mod rgs {
                         self.local_site,
                         &mut self.local_sequence,
                     );
-                    Node::new(value, new_s4, Some(l), None)
+                    Node::new(value, new_s4, Some(l.s4vector), None)
                 }
                 (None, Some(r)) => {
                     let new_s4: S4Vector = S4Vector::generate(
@@ -133,7 +146,7 @@ pub mod rgs {
                         self.local_site,
                         &mut self.local_sequence,
                     );
-                    Node::new(value, new_s4, None, Some(r))
+                    Node::new(value, new_s4, None, Some(r.s4vector))
                 }
                 (None, None) => {
                     let new_s4: S4Vector = S4Vector::generate(
@@ -146,9 +159,11 @@ pub mod rgs {
                     Node::new(value, new_s4, None, None)
                 }
             };
-            let node = RGA::insert_into_list(new_node);
+            let new_node: Rc<RefCell<Node>> = Rc::new(RefCell::new(new_node));
+            let node: Rc<RefCell<Node>> = self.insert_into_list(new_node);
 
-            self.hash_map.insert(node.s4vector, node);
+            self.hash_map
+                .insert(node.borrow().s4vector, Rc::clone(&node));
             // Broadcast("INSERT",node.s4vector,value,left.s4vector,right.s4vector);
         }
 
@@ -172,24 +187,16 @@ pub mod rgs {
             right: Option<S4Vector>,
         ) {
             let new_node: Node = match (left, right) {
-                (Some(l), Some(r)) => {
-                    let left_node: Rc<Node> = Rc::clone(&self.hash_map[&l]);
-                    let right_node: Rc<Node> = Rc::clone(&self.hash_map[&r]);
-                    Node::new(value, s4vector, Some(left_node), Some(right_node))
-                }
-                (Some(l), None) => {
-                    let left_node: Rc<Node> = Rc::clone(&self.hash_map[&l]);
-                    Node::new(value, s4vector, Some(left_node), None)
-                }
-                (None, Some(r)) => {
-                    let right_node: Rc<Node> = Rc::clone(&self.hash_map[&r]);
-                    Node::new(value, s4vector, None, Some(right_node))
-                }
+                (Some(l), Some(r)) => Node::new(value, s4vector, Some(l), Some(r)),
+                (Some(l), None) => Node::new(value, s4vector, Some(l), None),
+                (None, Some(r)) => Node::new(value, s4vector, None, Some(r)),
                 (None, None) => Node::new(value, s4vector, None, None),
             };
+            let new_node: Rc<RefCell<Node>> = Rc::new(RefCell::new(new_node));
+            let node: Rc<RefCell<Node>> = self.insert_into_list(new_node);
 
-            let node = RGA::insert_into_list(new_node);
-            self.hash_map.insert(s4vector, node);
+            self.hash_map
+                .insert(node.borrow().s4vector, Rc::clone(&node));
         }
 
         /// Remote operation to remove an ekement given the UID
