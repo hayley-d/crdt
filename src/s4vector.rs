@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 /// #Example
 /// ```
 /// let current_session : u64 = 1; // Current collaboration session ID
