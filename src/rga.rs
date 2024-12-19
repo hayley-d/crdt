@@ -1,7 +1,7 @@
 pub mod rgs {
     use crate::S4Vector;
     use std::cell::RefCell;
-    use std::collections::{HashMap, LinkedList};
+    use std::collections::{HashMap, VecDeque};
     use std::rc::Rc;
     #[allow(dead_code)]
 
@@ -19,10 +19,21 @@ pub mod rgs {
         pub right: Option<S4Vector>,
     }
 
-    /// Clock keeps the logical time for the replica, it increments for every operation that
-    /// occurs.
-    struct Clock {
-        count: u64,
+    #[derive(Debug, Clone)]
+    enum OperationType {
+        Insert,
+        Update,
+        Delete,
+    }
+
+    // Represents an operation that is temporarily inresloved due to dependancies
+    #[derive(Debug, Clone)]
+    struct Operation {
+        operation: OperationType,
+        s4vector: S4Vector,
+        value: Option<String>, // Can be None for delete operations
+        left: Option<S4Vector>,
+        right: Option<S4Vector>,
     }
 
     /// #Example
@@ -58,9 +69,10 @@ pub mod rgs {
     pub struct RGA {
         head: Option<S4Vector>,
         hash_map: HashMap<S4Vector, Rc<RefCell<Node>>>,
-        session_id: u64,     //Current session ID
-        site_id: u64,        // Unique ID for this replica
-        local_sequence: u64, // Logical clock for this replica
+        buffer: VecDeque<Operation>, // Buffer to hold unresolved operations
+        session_id: u64,             //Current session ID
+        site_id: u64,                // Unique ID for this replica
+        local_sequence: u64,         // Logical clock for this replica
     }
 
     impl Node {
@@ -118,6 +130,7 @@ pub mod rgs {
             return RGA {
                 head: None,
                 hash_map: HashMap::new(),
+                buffer: VecDeque::new(),
                 session_id,
                 site_id,
                 local_sequence: 0,
@@ -127,7 +140,9 @@ pub mod rgs {
         fn insert_into_list(&mut self, node: Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
             let right: &Option<S4Vector> = &node.borrow().right;
             let left: &Option<S4Vector> = &node.borrow().left;
-            if let Some(right_s4) = right {
+            // TODO: Update logic for insert into list
+
+            /*if let Some(right_s4) = right {
                 let right: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&right_s4]);
                 right.borrow_mut().left = Some(node.borrow().s4vector);
             }
@@ -135,9 +150,11 @@ pub mod rgs {
             if let Some(left_s4) = left {
                 let left: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&left_s4]);
                 left.borrow_mut().right = Some(node.borrow().s4vector);
-            }
+            }*/
 
             if self.head.is_none() {
+                self.head = Some(node.borrow().s4vector);
+            } else if left.is_none() {
                 self.head = Some(node.borrow().s4vector);
             }
 
@@ -148,39 +165,79 @@ pub mod rgs {
         pub fn local_insert(
             &mut self,
             value: String,
-            left: Option<Rc<Node>>,
-            right: Option<Rc<Node>>,
+            left: Option<S4Vector>,
+            right: Option<S4Vector>,
         ) -> S4Vector {
             let new_node: Node = match (left, right) {
                 (Some(l), Some(r)) => {
+                    // Generate the S4Vector
                     let new_s4: S4Vector = S4Vector::generate(
-                        Some(&l.s4vector),
-                        Some(&r.s4vector),
+                        Some(&l),
+                        Some(&r),
                         self.session_id,
                         self.site_id,
                         &mut self.local_sequence,
                     );
-                    Node::new(value, new_s4, Some(l.s4vector), Some(r.s4vector))
+
+                    // Check if the dependensies are resolved
+                    if !self.hash_map.contains_key(&l) {
+                        self.buffer.push_back(Operation {
+                            operation: OperationType::Insert,
+                            s4vector: new_s4,
+                            value: Some(value),
+                            left,
+                            right,
+                        });
+                        return new_s4;
+                    }
+
+                    Node::new(value, new_s4, Some(l), Some(r))
                 }
                 (Some(l), None) => {
                     let new_s4: S4Vector = S4Vector::generate(
-                        Some(&l.s4vector),
+                        Some(&l),
                         None,
                         self.session_id,
                         self.site_id,
                         &mut self.local_sequence,
                     );
-                    Node::new(value, new_s4, Some(l.s4vector), None)
+
+                    // Check if the dependensies are resolved
+                    if !self.hash_map.contains_key(&l) {
+                        self.buffer.push_back(Operation {
+                            operation: OperationType::Insert,
+                            s4vector: new_s4,
+                            value: Some(value),
+                            left,
+                            right,
+                        });
+                        return new_s4;
+                    }
+
+                    Node::new(value, new_s4, Some(l), None)
                 }
                 (None, Some(r)) => {
                     let new_s4: S4Vector = S4Vector::generate(
                         None,
-                        Some(&r.s4vector),
+                        Some(&r),
                         self.session_id,
                         self.site_id,
                         &mut self.local_sequence,
                     );
-                    Node::new(value, new_s4, None, Some(r.s4vector))
+
+                    // Check if the dependensies are resolved
+                    if !self.hash_map.contains_key(&r) {
+                        self.buffer.push_back(Operation {
+                            operation: OperationType::Insert,
+                            s4vector: new_s4,
+                            value: Some(value),
+                            left,
+                            right,
+                        });
+                        return new_s4;
+                    }
+
+                    Node::new(value, new_s4, None, Some(r))
                 }
                 (None, None) => {
                     let new_s4: S4Vector = S4Vector::generate(
@@ -190,12 +247,14 @@ pub mod rgs {
                         self.site_id,
                         &mut self.local_sequence,
                     );
+
                     Node::new(value, new_s4, None, None)
                 }
             };
             let new_node: Rc<RefCell<Node>> = Rc::new(RefCell::new(new_node));
             let node: Rc<RefCell<Node>> = self.insert_into_list(new_node);
 
+            // Insert into the hash table
             self.hash_map
                 .insert(node.borrow().s4vector, Rc::clone(&node));
             // Broadcast("INSERT",node.s4vector,value,left.s4vector,right.s4vector);
@@ -204,7 +263,14 @@ pub mod rgs {
 
         /// Local operation to mark an element as deleted based on the given UID.
         pub fn local_delete(&mut self, s4vector: S4Vector) {
-            let node: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&s4vector]);
+            let node: Rc<RefCell<Node>> = match self.hash_map.get(&s4vector) {
+                Some(node) => Rc::clone(&node),
+                None => {
+                    // not in this document
+                    return;
+                    todo!()
+                }
+            };
             node.borrow_mut().tombstone = true;
             // BROADCAST("DELETE",s4vector)
         }
@@ -243,7 +309,13 @@ pub mod rgs {
         /// Remote operation to remove an ekement given the UID
         /// This operation updates the RGA to ensure eventual consistency
         pub fn remote_delete(&mut self, s4vector: S4Vector) {
-            let node: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&s4vector]);
+            let node: Rc<RefCell<Node>> = match self.hash_map.get(&s4vector) {
+                Some(node) => Rc::clone(&node),
+                None => {
+                    // The values has not been added yet
+                    return;
+                }
+            };
             node.borrow_mut().tombstone = true;
         }
 
@@ -256,6 +328,7 @@ pub mod rgs {
             }
         }
 
+        /// Reads the RGA in its current state while skipping any tombstoned nodes.
         pub fn read(&self) -> Vec<String> {
             let mut result: Vec<String> = Vec::new();
             let mut current: Option<S4Vector> = self.head;
@@ -272,27 +345,6 @@ pub mod rgs {
                 }
             }
             return result;
-        }
-    }
-
-    impl Default for Clock {
-        /// Creates a new clock
-        fn default() -> Self {
-            return Clock { count: 0 };
-        }
-    }
-
-    impl Clock {
-        /// Creates a new clock.
-        pub fn new() -> Self {
-            return Clock { count: 0 };
-        }
-
-        /// Increments the count of the clock.
-        /// Called when a new operation is recieved by the replica.
-        pub fn increment(&mut self) -> u64 {
-            self.count += 1;
-            self.count
         }
     }
 }
