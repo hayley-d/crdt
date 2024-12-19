@@ -25,12 +25,42 @@ pub mod rgs {
         count: u64,
     }
 
+    /// #Example
+    /// ```
+    /// fn main() {
+    ///     let mut rga : RGA = RGA::new(1,1);
+    ///
+    ///     // Insert elements locally
+    ///     let s4_1 : S4Vector = rga.local_insert("A".to_string(),None,None);
+    ///     let s4_2 : S4Vector = rga.local_insert("B".to_string(),Some(s4_1),None);
+    ///
+    ///     // Delete element
+    ///     rga.local_delete(s4_1);
+    ///
+    ///     // Read the RGA state
+    ///     let current_state : Vec<String> = rga.read();
+    ///     println!("RGA state: {:?}",current_state);
+    ///
+    ///     // Simulate a remote insert
+    ///     let remote_s4_3 = S4Vector {
+    ///         ssn:2,
+    ///         sum:3,
+    ///         sid:2,
+    ///         seq: 1
+    ///     };
+    ///     rga.remote_insert(remote_s4_3,"C".to_string(),Some(s4_2),None);
+    ///
+    ///     // Read the Updated sate
+    ///     let updated_state: Vec<String> = rga.read();
+    ///     println!("{:?}",updated_state);
+    ///     ```
+
     pub struct RGA {
-        nodes: LinkedList<Node>,
+        head: Option<S4Vector>,
         hash_map: HashMap<S4Vector, Rc<RefCell<Node>>>,
-        current_session: u64,
-        local_site: u64,
-        local_sequence: u64,
+        session_id: u64,     //Current session ID
+        site_id: u64,        // Unique ID for this replica
+        local_sequence: u64, // Logical clock for this replica
     }
 
     impl Node {
@@ -84,12 +114,12 @@ pub mod rgs {
     }
 
     impl RGA {
-        pub fn new(current_session: u64, local_site: u64) -> Self {
+        pub fn new(session_id: u64, site_id: u64) -> Self {
             return RGA {
-                nodes: LinkedList::new(),
+                head: None,
                 hash_map: HashMap::new(),
-                current_session,
-                local_site,
+                session_id,
+                site_id,
                 local_sequence: 0,
             };
         }
@@ -97,14 +127,18 @@ pub mod rgs {
         fn insert_into_list(&mut self, node: Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
             let right: &Option<S4Vector> = &node.borrow().right;
             let left: &Option<S4Vector> = &node.borrow().left;
-            if right.is_some() {
-                let right: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&right.unwrap()]);
+            if let Some(right_s4) = right {
+                let right: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&right_s4]);
                 right.borrow_mut().left = Some(node.borrow().s4vector);
             }
 
-            if left.is_some() {
-                let left: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&left.unwrap()]);
+            if let Some(left_s4) = left {
+                let left: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&left_s4]);
                 left.borrow_mut().right = Some(node.borrow().s4vector);
+            }
+
+            if self.head.is_none() {
+                self.head = Some(node.borrow().s4vector);
             }
 
             return Rc::clone(&node);
@@ -116,14 +150,14 @@ pub mod rgs {
             value: String,
             left: Option<Rc<Node>>,
             right: Option<Rc<Node>>,
-        ) {
+        ) -> S4Vector {
             let new_node: Node = match (left, right) {
                 (Some(l), Some(r)) => {
                     let new_s4: S4Vector = S4Vector::generate(
                         Some(&l.s4vector),
                         Some(&r.s4vector),
-                        self.current_session,
-                        self.local_site,
+                        self.session_id,
+                        self.site_id,
                         &mut self.local_sequence,
                     );
                     Node::new(value, new_s4, Some(l.s4vector), Some(r.s4vector))
@@ -132,8 +166,8 @@ pub mod rgs {
                     let new_s4: S4Vector = S4Vector::generate(
                         Some(&l.s4vector),
                         None,
-                        self.current_session,
-                        self.local_site,
+                        self.session_id,
+                        self.site_id,
                         &mut self.local_sequence,
                     );
                     Node::new(value, new_s4, Some(l.s4vector), None)
@@ -142,8 +176,8 @@ pub mod rgs {
                     let new_s4: S4Vector = S4Vector::generate(
                         None,
                         Some(&r.s4vector),
-                        self.current_session,
-                        self.local_site,
+                        self.session_id,
+                        self.site_id,
                         &mut self.local_sequence,
                     );
                     Node::new(value, new_s4, None, Some(r.s4vector))
@@ -152,8 +186,8 @@ pub mod rgs {
                     let new_s4: S4Vector = S4Vector::generate(
                         None,
                         None,
-                        self.current_session,
-                        self.local_site,
+                        self.session_id,
+                        self.site_id,
                         &mut self.local_sequence,
                     );
                     Node::new(value, new_s4, None, None)
@@ -165,6 +199,7 @@ pub mod rgs {
             self.hash_map
                 .insert(node.borrow().s4vector, Rc::clone(&node));
             // Broadcast("INSERT",node.s4vector,value,left.s4vector,right.s4vector);
+            return node.borrow().s4vector;
         }
 
         /// Local operation to mark an element as deleted based on the given UID.
@@ -219,6 +254,24 @@ pub mod rgs {
             if !node.borrow().tombstone {
                 node.borrow_mut().value = value;
             }
+        }
+
+        pub fn read(&self) -> Vec<String> {
+            let mut result: Vec<String> = Vec::new();
+            let mut current: Option<S4Vector> = self.head;
+
+            while let Some(current_s4) = current {
+                if let Some(node) = self.hash_map.get(&current_s4) {
+                    if !node.borrow().tombstone {
+                        result.push(node.borrow().value.clone());
+                    }
+
+                    current = node.borrow().right;
+                } else {
+                    break;
+                }
+            }
+            return result;
         }
     }
 
