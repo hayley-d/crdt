@@ -1,6 +1,7 @@
 pub mod rgs {
     use crate::S4Vector;
     use std::collections::{HashMap, LinkedList};
+    use std::rc::Rc;
     #[allow(dead_code)]
 
     /// Node in the RGA represents an element in the array.
@@ -13,8 +14,8 @@ pub mod rgs {
         value: String,
         s4vector: S4Vector,
         tombstone: bool,
-        left: Option<Box<Node>>,
-        right: Option<Box<Node>>,
+        left: Option<Rc<Node>>,
+        right: Option<Rc<Node>>,
     }
 
     /// Clock keeps the logical time for the replica, it increments for every operation that
@@ -23,9 +24,9 @@ pub mod rgs {
         count: u64,
     }
 
-    pub struct RGA<'a> {
+    pub struct RGA {
         nodes: LinkedList<Node>,
-        hash_map: HashMap<S4Vector, &'a Node>,
+        hash_map: HashMap<S4Vector, Rc<Node>>,
         current_session: u64,
         local_site: u64,
         local_sequence: u64,
@@ -35,8 +36,8 @@ pub mod rgs {
         pub fn new(
             value: String,
             s4: S4Vector,
-            left: Option<Box<Node>>,
-            right: Option<Box<Node>>,
+            left: Option<Rc<Node>>,
+            right: Option<Rc<Node>>,
         ) -> Self {
             return Node {
                 value,
@@ -81,7 +82,7 @@ pub mod rgs {
         }
     }
 
-    impl<'a> RGA<'a> {
+    impl RGA {
         pub fn new(current_session: u64, local_site: u64) -> Self {
             return RGA {
                 nodes: LinkedList::new(),
@@ -92,7 +93,7 @@ pub mod rgs {
             };
         }
 
-        fn insert_into_list(node: Node) -> &'a Node {
+        fn insert_into_list(node: Node) -> Rc<Node> {
             todo!()
         }
 
@@ -100,8 +101,8 @@ pub mod rgs {
         pub fn local_insert(
             &mut self,
             value: String,
-            left: Option<Box<Node>>,
-            right: Option<Box<Node>>,
+            left: Option<Rc<Node>>,
+            right: Option<Rc<Node>>,
         ) {
             let new_node: Node = match (left, right) {
                 (Some(l), Some(r)) => {
@@ -163,7 +164,31 @@ pub mod rgs {
 
         /// Remote operation to add a new element at a position based on a provided UID
         /// This operation updates the RGA to ensure eventual consistency
-        pub fn remote_insert(&mut self, value: String, s4vector: S4Vector) {}
+        pub fn remote_insert(
+            &mut self,
+            value: String,
+            s4vector: S4Vector,
+            left: Option<S4Vector>,
+            right: Option<S4Vector>,
+        ) {
+            let new_node: Node = match (left, right) {
+                (Some(l), Some(r)) => {
+                    let left_node: Rc<Node> = Rc::clone(&self.hash_map[&l]);
+                    let right_node: Rc<Node> = Rc::clone(&self.hash_map[&r]);
+                    Node::new(value, s4vector, Some(left_node), Some(right_node))
+                }
+                (Some(l), None) => {
+                    let left_node: Rc<Node> = Rc::clone(&self.hash_map[&l]);
+                    Node::new(value, s4vector, Some(left_node), None)
+                }
+                (None, Some(r)) => {
+                    todo!()
+                }
+                (None, None) => {
+                    todo!()
+                }
+            };
+        }
 
         /// Remote operation to remove an ekement given the UID
         /// This operation updates the RGA to ensure eventual consistency
