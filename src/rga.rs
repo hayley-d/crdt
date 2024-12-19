@@ -182,12 +182,14 @@ pub mod rgs {
                     Node::new(value, s4vector, Some(left_node), None)
                 }
                 (None, Some(r)) => {
-                    todo!()
+                    let right_node: Rc<Node> = Rc::clone(&self.hash_map[&r]);
+                    Node::new(value, s4vector, None, Some(right_node))
                 }
-                (None, None) => {
-                    todo!()
-                }
+                (None, None) => Node::new(value, s4vector, None, None),
             };
+
+            let node = RGA::insert_into_list(new_node);
+            self.hash_map.insert(s4vector, node);
         }
 
         /// Remote operation to remove an ekement given the UID
