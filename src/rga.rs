@@ -168,13 +168,19 @@ pub mod rgs {
         }
 
         /// Local operation to mark an element as deleted based on the given UID.
-        pub fn delete(&mut self, s4vector: S4Vector) {
-            todo!()
+        pub fn local_delete(&mut self, s4vector: S4Vector) {
+            let node: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&s4vector]);
+            node.borrow_mut().tombstone = true;
+            // BROADCAST("DELETE",s4vector)
         }
 
         /// Local operation to modify the content of an existing element.
-        pub fn update(&mut self, s4vector: S4Vector) {
-            todo!()
+        pub fn local_update(&mut self, s4vector: S4Vector, value: String) {
+            let node: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&s4vector]);
+            if !node.borrow().tombstone {
+                node.borrow_mut().value = value;
+            }
+            //broadcast("UPDATE",s4vector,new_val)
         }
 
         /// Remote operation to add a new element at a position based on a provided UID
@@ -202,13 +208,17 @@ pub mod rgs {
         /// Remote operation to remove an ekement given the UID
         /// This operation updates the RGA to ensure eventual consistency
         pub fn remote_delete(&mut self, s4vector: S4Vector) {
-            todo!()
+            let node: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&s4vector]);
+            node.borrow_mut().tombstone = true;
         }
 
         /// Remote operation to update an element
         /// This operation updates the RGA to ensure eventual consistency
-        pub fn remote_update(&mut self, s4vector: S4Vector) {
-            todo!()
+        pub fn remote_update(&mut self, s4vector: S4Vector, value: String) {
+            let node: Rc<RefCell<Node>> = Rc::clone(&self.hash_map[&s4vector]);
+            if !node.borrow().tombstone {
+                node.borrow_mut().value = value;
+            }
         }
     }
 
