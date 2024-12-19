@@ -152,6 +152,25 @@ pub mod rgs {
                 left.borrow_mut().right = Some(node.borrow().s4vector);
             }*/
 
+            if let Some(left) = left {
+                let mut current: S4Vector = left.clone();
+                while let Some(node) = self.hash_map.get(&current) {
+                    if let Some(next_s4) = &node.borrow_mut().right {
+                        if next_s4 > &node.borrow().s4vector {
+                            break;
+                        }
+                        current = next_s4.clone();
+                    } else {
+                        break;
+                    }
+                }
+
+                if let Some(other) = self.hash_map.get(&current) {
+                    node.borrow_mut().right = other.borrow().right;
+                    other.borrow_mut().right = Some(node.borrow().s4vector);
+                }
+            }
+
             if self.head.is_none() {
                 self.head = Some(node.borrow().s4vector);
             } else if left.is_none() {
@@ -266,12 +285,19 @@ pub mod rgs {
             let node: Rc<RefCell<Node>> = match self.hash_map.get(&s4vector) {
                 Some(node) => Rc::clone(&node),
                 None => {
-                    // not in this document
+                    self.buffer.push_back(Operation {
+                        operation: OperationType::Delete,
+                        s4vector,
+                        value: None,
+                        left: None,
+                        right: None,
+                    });
                     return;
-                    todo!()
                 }
             };
+
             node.borrow_mut().tombstone = true;
+
             // BROADCAST("DELETE",s4vector)
         }
 
@@ -345,6 +371,42 @@ pub mod rgs {
                 }
             }
             return result;
+        }
+
+        pub fn apply_buffered_operations(&mut self) {
+            let buffer: &mut VecDeque<Operation> = &mut self.buffer;
+
+            for op in buffer.iter() {
+                if !self.hash_map.contains_key(&op.s4vector) {
+                    break;
+                }
+                let op = buffer.pop_front();
+            }
+            /*self.buffer.retain(|&op| {
+                if let Some(left) = &op.left.clone() {
+                    if !self.hash_map.contains_key(left) {
+                        return true;
+                    }
+                }
+
+                match op.operation {
+                    OperationType::Insert => {
+                        if let Some(value) = &op.value {
+                            &self.remote_insert(value.to_string(), op.s4vector, op.left, op.right);
+                        }
+                    }
+                    OperationType::Update => {
+                        if let Some(value) = &op.value {
+                            &self.remote_update(op.s4vector, value.to_string());
+                        }
+                    }
+                    OperationType::Delete => {
+                        &self.remote_delete(op.s4vector);
+                    }
+                }
+
+                false
+            });*/
         }
     }
 }
