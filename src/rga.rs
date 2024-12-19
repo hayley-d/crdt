@@ -1,24 +1,20 @@
 pub mod rgs {
+    use crate::S4Vector;
+    use std::collections::{HashSet, LinkedList};
     #[allow(dead_code)]
     use std::fmt::Display;
 
-    /// The UID is a combination of the logical clock and a fractional value.
-    /// This approach ensures total order of operations within the replica and the fraction
-    /// determines the element's position in the array
-    #[derive(Debug, Clone, Copy)]
-    pub struct Uid {
-        logical_clock: u64,
-        fractional_position: f64,
-    }
-
-    /// An element of the Replicated growable array (RGA) represents a char in the text document.
-    /// The value is the string being represented, the unique identifier (UID) is a tuple of the
-    /// logical clock and the fractional component and the tombstone is a flag to mark for logical
-    /// deletion.
-    pub struct Element {
+    /// Node in the RGA represents an element in the array.
+    /// The value is the actual content (string or character)
+    /// The S4Vector is a unique identifier for the node
+    /// The Tombstone is a boolean indicating if the node has been marked as deleted.
+    /// The left and right pointers are references to adjacent nodes in the linked list
+    pub struct Node {
         value: String,
-        uid: Uid,
+        s4vector: S4Vector,
         tombstone: bool,
+        left: Box<Node>,
+        right: Box<Node>,
     }
 
     /// Clock keeps the logical time for the replica, it increments for every operation that
@@ -28,53 +24,67 @@ pub mod rgs {
     }
 
     pub struct RGA {
-        elements: Vec<Element>,
-        /// Logical clock for the replica
-        clock: Clock,
+        nodes: LinkedList<Node>,
+        hash_map: HashSet<S4Vector, Node>,
+        current_session: u64,
+        local_site: u64,
+        local_sequence: u64,
     }
 
-    impl Element {}
+    impl Node {
+        pub fn new(value: String, s4: S4Vector, left: Box<Node>, right: Box<Node>) -> Self {
+            return Node {
+                value,
+                s4vector: s4,
+                tombstone: false,
+                left,
+                right,
+            };
+        }
+    }
 
     impl RGA {
         pub fn new() -> Self {
             return RGA {
-                elements: Vec::new(),
-                clock: Clock::default(),
+                nodes: LinkedList::new(),
+                hash_map: hm,
             };
         }
 
-        /// Generates a UID for a new element by retrieving the clock count and calculating the
-        /// fractional position.
-        fn generate_uid(&mut self, predecessor: f64, successor: f64) -> Uid {
-            let fractional_position: f64 = (predecessor + successor) / 2.0;
-            return Uid {
-                logical_clock: self.clock.increment(),
-                fractional_position,
-            };
+        fn insert_into_list(node: Node, left: Option<Box<Node>>, right: Option<Box<Node>>) {
+            todo!()
         }
-
-        /// Local operation to add a new element to the CRDT in the correct position.
-        pub fn insert(&mut self, value: String, pred: Option<Uid>, succ: Option<Uid>) -> Uid {
-            let uid: Uid = match (pred, succ) {
-                (Some(p), Some(s)) => {
-                    self.generate_uid(p.fractional_position, s.fractional_position)
+        /// Local insert operation to insert the element into the list at a specific position.
+        pub fn local_insert(
+            &mut self,
+            value: String,
+            left: Option<Box<Node>>,
+            right: Option<Box<Node>>,
+        ) {
+            match (left, right) {
+                (Some(l), Some(r)) => {
+                    let new_s4: S4Vector = S4Vector::generate(Some(&l.s4vector), Some(&r.s4vector));
+                    let new_node: Node = Node::new(value, new_s4, l, r);
+                    RGA::insert_into_list(new_node, Some(l), Some(r));
                 }
-                (Some(p), None) => self.generate_uid(p.fractional_position, 1.0),
-                (None, Some(s)) => self.generate_uid(0.0, s.fractional_position),
-                (None, None) => self.generate_uid(0.0, 1.0),
-            };
+                (Some(l), None) => {
+                    let new_s4: S4Vector = S4Vector::generate_s4vector(&l.s4vector, None);
+                    let new_node: Node = Node::new(value, new_s4, left, right);
+                    RGA::insert_into_list(node, left, right);
+                }
+                (None, Some(r)) => {
+                    let new_s4: S4Vector = RGA::generate_s4vector(&left.s4vector, &right.s4vector);
+                    let new_node: Node = Node::new(value, new_s4, left, right);
+                    RGA::insert_into_list(node, left, right);
+                }
+                (None, None) => {
+                    let new_s4: S4Vector = RGA::generate_s4vector(&left.s4vector, &right.s4vector);
+                    let new_node: Node = Node::new(value, new_s4, left, right);
+                    RGA::insert_into_list(node, left, right);
+                }
+            }
 
-            let element: Element = Element {
-                value,
-                uid,
-                tombstone: false,
-            };
-
-            self.elements.push(element);
-
-            self.elements.sort_by(|a, b| a.uid.cmp(&b.uid));
-
-            return uid;
+            todo!()
         }
 
         /// Local operation to mark an element as deleted based on the given UID.
@@ -89,9 +99,7 @@ pub mod rgs {
 
         /// Remote operation to add a new element at a position based on a provided UID
         /// This operation updates the RGA to ensure eventual consistency
-        pub fn remote_insert(&mut self, value: String, uid: Uid) {
-            todo!()
-        }
+        pub fn remote_insert(&mut self, value: String, uid: Uid) {}
 
         /// Remote operation to remove an ekement given the UID
         /// This operation updates the RGA to ensure eventual consistency
