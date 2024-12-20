@@ -13,6 +13,7 @@
 ///
 /// # Example
 /// ```
+/// use crdt::S4Vector;
 /// let current_session: u64 = 1; // Session ID
 /// let local_site: u64 = 42; // Replica ID
 /// let mut local_sequence: u64 = 0; // Local logical clock
@@ -30,13 +31,13 @@
 #[derive(Debug, Clone, Copy)]
 pub struct S4Vector {
     /// Session ID, ensuring global uniqueness of operations within a session.
-    ssn: u64,
+    pub ssn: u64,
     /// Logical clock value used for ordering operations.
-    sum: u64,
+    pub sum: u64,
     /// Site ID, identifying the replica where the operation originated.
-    sid: u64,
+    pub sid: u64,
     /// Sequence number, providing a local logical clock increment.
-    seq: u64,
+    pub seq: u64,
 }
 
 impl std::hash::Hash for S4Vector {
@@ -100,6 +101,7 @@ impl S4Vector {
     ///
     /// # Examples
     /// ```
+    /// use crdt::S4Vector;
     /// let left = S4Vector { ssn: 1, sum: 10, sid: 1, seq: 1 };
     /// let right = S4Vector { ssn: 1, sum: 20, sid: 2, seq: 2 };
     /// let current_session = 1;

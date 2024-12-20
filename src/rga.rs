@@ -1,4 +1,4 @@
-pub mod rgs {
+pub mod rga {
     use crate::S4Vector;
     use std::cell::RefCell;
     use std::collections::{HashMap, VecDeque};
@@ -38,33 +38,26 @@ pub mod rgs {
 
     /// #Example
     /// ```
+    /// use crdt::S4Vector;
+    /// use crdt::rga::rga::RGA;
+    ///
     /// fn main() {
-    ///     let mut rga : RGA = RGA::new(1,1);
+    ///     let mut rga = RGA::new(1, 1);
     ///
-    ///     // Insert elements locally
-    ///     let s4_1 : S4Vector = rga.local_insert("A".to_string(),None,None);
-    ///     let s4_2 : S4Vector = rga.local_insert("B".to_string(),Some(s4_1),None);
+    ///     // Insert elements
+    ///     let s4_a = rga.local_insert("A".to_string(), None, None).unwrap().s4vector;
+    ///     let s4_b = rga.local_insert("B".to_string(), Some(s4_a), None).unwrap().s4vector;
     ///
-    ///     // Delete element
-    ///     rga.local_delete(s4_1);
+    ///     // Delete an element
+    ///     rga.local_delete(s4_a).unwrap();
     ///
-    ///     // Read the RGA state
-    ///     let current_state : Vec<String> = rga.read();
-    ///     println!("RGA state: {:?}",current_state);
+    ///     // Update an element
+    ///     rga.local_update(s4_b, "Updated B".to_string()).unwrap();
     ///
-    ///     // Simulate a remote insert
-    ///     let remote_s4_3 = S4Vector {
-    ///         ssn:2,
-    ///         sum:3,
-    ///         sid:2,
-    ///         seq: 1
-    ///     };
-    ///     rga.remote_insert(remote_s4_3,"C".to_string(),Some(s4_2),None);
-    ///
-    ///     // Read the Updated sate
-    ///     let updated_state: Vec<String> = rga.read();
-    ///     println!("{:?}",updated_state);
-    ///     ```
+    ///     // Read the state
+    ///     println!("Current RGA State: {:?}", rga.read());    
+    /// }
+    /// ```
 
     pub struct RGA {
         head: Option<S4Vector>,
@@ -152,7 +145,7 @@ pub mod rgs {
         }
 
         fn insert_into_list(&mut self, node: Rc<RefCell<Node>>) -> Rc<RefCell<Node>> {
-            let left: &Option<S4Vector> = &node.borrow().left;
+            let left: Option<S4Vector> = node.borrow().left.clone();
 
             if let Some(left) = left {
                 let mut current: S4Vector = left.clone();
@@ -348,7 +341,7 @@ pub mod rgs {
 
             return Ok(BroadcastOperation {
                 operation: OperationType::Update,
-                s4vector: node.borrow().s4vector,
+                s4vector,
                 value: Some(node.borrow().value.clone()),
                 left: node.borrow().left.clone(),
                 right: node.borrow().right.clone(),
