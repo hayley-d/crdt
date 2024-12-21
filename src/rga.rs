@@ -1,24 +1,60 @@
 pub mod rga {
+    /// The `RGA` module implements a Replicated Growable Array (RGA),
+    /// a Conflict-free Replicated Data Type (CRDT) designed for distributed systems.
+    /// This data structure supports concurrent operations such as insertions,
+    /// deletions, and updates while ensuring eventual consistency and deterministic
+    /// conflict resolution across multiple replicas.
+    ///
+    /// # Key Features
+    /// - **Distributed Collaboration**: Designed for systems with concurrent updates,
+    ///   such as collaborative editing tools.
+    /// - **Eventual Consistency**: Ensures all replicas converge to the same state
+    ///   without the need for centralized coordination.
+    /// - **Efficient Buffering**: Handles out-of-order operations with a buffering
+    ///   mechanism that resolves dependencies dynamically.
+    ///
+    /// # Example Usage
+    /// ```rust
+    /// use crdt::rga::rga::RGA;
+    /// use crdt::S4Vector;
+    ///
+    /// let mut rga = RGA::new(1, 1);  // Create a new RGA instance.
+    ///
+    /// // Insert a value at the start.
+    /// let s4_a = rga.local_insert("A".to_string(), None, None).unwrap().s4vector;
+    ///
+    /// // Insert another value after "A".
+    /// let s4_b = rga.local_insert("B".to_string(), Some(s4_a.clone()), None).unwrap().s4vector;
+    ///
+    /// // Delete the first value.
+    /// rga.local_delete(s4_a.clone()).unwrap();
+    ///
+    /// // Read the current state.
+    /// let result = rga.read();
+    /// assert_eq!(result, vec!["B".to_string()]);
+    /// ```
     use crate::S4Vector;
     use std::cell::RefCell;
     use std::collections::{HashMap, VecDeque};
     use std::rc::Rc;
     #[allow(dead_code)]
 
-    /// Node in the RGA represents an element in the array.
-    /// The value is the actual content (string or character)
-    /// The S4Vector is a unique identifier for the node
-    /// The Tombstone is a boolean indicating if the node has been marked as deleted.
-    /// The left and right pointers are references to adjacent nodes in the linked list
+    /// Represents a node in the RGA, containing the actual data and metadata for traversal and consistency.    
     #[derive(Debug, Clone)]
     pub struct Node {
+        /// The value of the node.
         pub value: String,
+        /// The unique identifier for the node based on S4Vector
         pub s4vector: S4Vector,
+        /// Indicates whether the node has been logically deleted.
         pub tombstone: bool,
+        /// The `S4Vector` of the left neighbor
         pub left: Option<S4Vector>,
+        /// The `S4Vector` of the right neighbor
         pub right: Option<S4Vector>,
     }
 
+    /// Enum representing different types of operations that can be applied to the RGA.
     #[derive(Debug, Clone)]
     pub enum OperationType {
         Insert,
@@ -26,46 +62,32 @@ pub mod rga {
         Delete,
     }
 
-    // Represents an operation that is temporarily inresloved due to dependancies
+    /// Represents an operation in the RGA.
     #[derive(Debug, Clone)]
     struct Operation {
         operation: OperationType,
         s4vector: S4Vector,
-        value: Option<String>, // Can be None for delete operations
+        value: Option<String>, //Optional for deletes
         left: Option<S4Vector>,
         right: Option<S4Vector>,
     }
 
-    /// #Example
-    /// ```
-    /// use crdt::S4Vector;
-    /// use crdt::rga::rga::RGA;
-    ///
-    /// fn main() {
-    ///     let mut rga = RGA::new(1, 1);
-    ///
-    ///     // Insert elements
-    ///     let s4_a = rga.local_insert("A".to_string(), None, None).unwrap().s4vector;
-    ///     let s4_b = rga.local_insert("B".to_string(), Some(s4_a), None).unwrap().s4vector;
-    ///
-    ///     // Delete an element
-    ///     rga.local_delete(s4_a).unwrap();
-    ///
-    ///     // Update an element
-    ///     rga.local_update(s4_b, "Updated B".to_string()).unwrap();
-    ///
-    ///     // Read the state
-    ///     println!("Current RGA State: {:?}", rga.read());    
-    /// }
-    /// ```
-
+    /// Represents the RGA structure, which is a distributed data structure
+    /// supporting concurrent operations and eventual consistency.
+    #[derive(Debug)]
     pub struct RGA {
+        /// The head of the linked list.
         head: Option<S4Vector>,
+        /// Maps `S4Vector` identifiers to `Node` instances.
         hash_map: HashMap<S4Vector, Rc<RefCell<Node>>>,
-        buffer: VecDeque<Operation>, // Buffer to hold unresolved operations
-        session_id: u64,             //Current session ID
-        site_id: u64,                // Unique ID for this replica
-        local_sequence: u64,         // Logical clock for this replica
+        /// A Buffer for out-of-order operations.
+        buffer: VecDeque<Operation>,
+        /// The current session ID.
+        session_id: u64,
+        /// The site ID for the current replica.
+        site_id: u64,
+        /// The local logical clock.
+        local_sequence: u64,
     }
 
     #[derive(Debug, thiserror::Error)]
@@ -83,6 +105,16 @@ pub mod rga {
     }
 
     impl Node {
+        /// Creates a new `Node` instance.
+        ///
+        /// # Parameters
+        /// - `value`: The content of the node.
+        /// - `s4vector`: The unique identifier for this node.
+        /// - `left`: The S4Vector of the left neighbor.
+        /// - `right`: The S4Vector of the right neighbor.
+        ///
+        /// # Returns
+        /// A new instance of `Node`.
         pub fn new(
             value: String,
             s4: S4Vector,
@@ -133,6 +165,14 @@ pub mod rga {
     }
 
     impl RGA {
+        /// Creates a new instance of the RGA.
+        ///
+        /// # Parameters
+        /// - `session_id`: The ID of the current session.
+        /// - `site_id`: The unique ID for the current replica.
+        ///
+        /// # Returns
+        /// A new instance of `RGA`.
         pub fn new(session_id: u64, site_id: u64) -> Self {
             return RGA {
                 head: None,
@@ -175,7 +215,23 @@ pub mod rga {
             return Rc::clone(&node);
         }
 
-        /// Local insert operation to insert the element into the list at a specific position.
+        /// Inserts a new value into the RGA.
+        ///
+        /// # Parameters
+        /// - `value`: The value to insert.
+        /// - `left`: The S4Vector of the left neighbor (if any).
+        /// - `right`: The S4Vector of the right neighbor (if any).
+        ///
+        /// # Returns
+        /// `Ok(())` if the insertion is successful, otherwise an error message.
+        ///
+        /// # Example
+        /// ```rust
+        /// use crdt::rga::rga::RGA;
+        /// use crdt::S4Vector;
+        /// let mut rga = RGA::new(1,1);
+        /// rga.local_insert("A".to_string(), None, None).unwrap();
+        /// ```
         pub fn local_insert(
             &mut self,
             value: String,
@@ -283,7 +339,13 @@ pub mod rga {
             });
         }
 
-        /// Local operation to mark an element as deleted based on the given UID.
+        /// Marks a node as logically deleted.
+        ///
+        /// # Parameters
+        /// - `s4vector`: The unique identifier of the node to delete.
+        ///
+        /// # Returns
+        /// `Ok(())` if the deletion is successful, otherwise an error message.
         pub fn local_delete(
             &mut self,
             s4vector: S4Vector,
@@ -315,7 +377,13 @@ pub mod rga {
             });
         }
 
-        /// Local operation to modify the content of an existing element.
+        /// Marks a node as logically deleted.
+        ///
+        /// # Parameters
+        /// - `s4vector`: The unique identifier of the node to delete.
+        ///
+        /// # Returns
+        /// `Ok(())` if the deletion is successful, otherwise an error message.
         pub fn local_update(
             &mut self,
             s4vector: S4Vector,
@@ -395,7 +463,10 @@ pub mod rga {
             self.apply_buffered_operations();
         }
 
-        /// Reads the RGA in its current state while skipping any tombstoned nodes.
+        /// Reads the current state of the RGA, skipping tombstoned nodes.
+        ///
+        /// # Returns
+        /// A vector of strings representing the current sequence.
         pub fn read(&self) -> Vec<String> {
             let mut result: Vec<String> = Vec::new();
             let mut current: Option<S4Vector> = self.head;
@@ -444,6 +515,55 @@ pub mod rga {
             });
 
             self.buffer = buffer;
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_insert() {
+            let mut rga = RGA::new(1, 1);
+            let result = rga.local_insert("A".to_string(), None, None);
+            assert!(result.is_ok());
+            assert_eq!(rga.hash_map.len(), 1);
+        }
+
+        #[test]
+        fn test_delete() {
+            let mut rga = RGA::new(1, 1);
+            let s4 = rga
+                .local_insert("A".to_string(), None, None)
+                .unwrap()
+                .s4vector;
+            let result = rga.local_delete(s4.clone());
+            assert!(result.is_ok());
+            assert!(rga.hash_map[&s4].borrow().tombstone);
+        }
+
+        #[test]
+        fn test_update() {
+            let mut rga = RGA::new(1, 1);
+            let s4 = rga
+                .local_insert("A".to_string(), None, None)
+                .unwrap()
+                .s4vector;
+            let result = rga.local_update(s4.clone(), "B".to_string());
+            assert!(result.is_ok());
+            assert_eq!(rga.hash_map[&s4].borrow().value, "B".to_string());
+        }
+
+        #[test]
+        fn test_read() {
+            let mut rga = RGA::new(1, 1);
+            rga.local_insert("A".to_string(), None, None).unwrap();
+            let s4 = rga.head.unwrap();
+            rga.local_insert("B".to_string(), Some(s4), None).unwrap();
+            rga.local_delete(s4).unwrap();
+
+            let result = rga.read();
+            assert_eq!(result, vec!["B".to_string()]);
         }
     }
 }
