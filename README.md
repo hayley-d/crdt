@@ -1,6 +1,8 @@
 # Replicated Growable Array (RGA) with S4Vector
 
 This repository provides an implementation of a **Replicated Growable Array (RGA)**, a distributed data structure for collaborative applications. The RGA ensures **eventual consistency** and conflict resolution using the **S4Vector** indexing system, a robust mechanism for deterministic operation ordering in distributed environments.
+
+
 ---
 
 ## What is a Replicated Growable Array (RGA)?
